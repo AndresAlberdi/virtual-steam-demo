@@ -1,0 +1,70 @@
+name: CI/CD Pipeline - Virtual STEAM Demo
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # TRABAJO 1: PRUEBAS UNITARIAS Y ANÁLISIS DE CIBERSEGURIDAD CON SNYK
+  # ---------------------------------------------------------------------------
+  test-and-security:
+    name: Pruebas Unitarias y Análisis Snyk
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Código Fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalación de Dependencias
+        run: npm ci
+
+      - name: Ejecución de Pruebas Unitarias (Vitest)
+        run: npm test
+
+      - name: Escaneo de Ciberseguridad de Dependencias con Snyk
+        uses: snyk/actions/node@master
+        continue-on-error: true # Permite auditar sin bloquear builds en avisos informativos
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # TRABAJO 2: COMPILACIÓN Y DESPLIEGUE A FIREBASE HOSTING
+  # ---------------------------------------------------------------------------
+  build-and-deploy:
+    name: Compilación y Despliegue en Firebase Hosting
+    needs: test-and-security
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout Código Fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalación de Dependencias
+        run: npm ci
+
+      - name: Compilación de Producción (Vite Build)
+        run: npm run build
+
+      - name: Despliegue Automatizado a Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_VIRTUAL_STEAM_DEMO }}'
+          projectId: virtual-steam-demo
+          channelId: live
