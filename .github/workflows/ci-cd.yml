@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# Permisos mínimos por defecto; cada job eleva solo lo que necesita.
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # TRABAJO 1: PRUEBAS UNITARIAS Y ANÁLISIS DE CIBERSEGURIDAD CON SNYK
@@ -13,13 +17,15 @@ jobs:
   test-and-security:
     name: Pruebas Unitarias y Análisis Snyk
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout Código Fuente
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configurar Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -30,27 +36,49 @@ jobs:
       - name: Ejecución de Pruebas Unitarias (Vitest)
         run: npm test
 
+      # snyk/actions no publica releases utilizables: solo mantiene master, así
+      # que se fija el SHA de master y se refresca a mano en la revisión
+      # trimestral (control GHR-07b del estándar). Antes estaba en @master, un
+      # tag móvil que recibía SNYK_TOKEN en cada ejecución.
       - name: Escaneo de Ciberseguridad de Dependencias con Snyk
-        uses: snyk/actions/node@master
+        uses: snyk/actions/node@12140f4059e244892ae643824a95459a102120dd # master @ 2026-08
         continue-on-error: true # Permite auditar sin bloquear builds en avisos informativos
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
   # ---------------------------------------------------------------------------
   # TRABAJO 2: COMPILACIÓN Y DESPLIEGUE A FIREBASE HOSTING
+  #
+  # Despliegue SIN llaves estáticas: identidad federada (WIF) contra GCP. Antes
+  # este job usaba FirebaseExtended/action-hosting-deploy, que solo acepta un
+  # JSON de service account — es decir, obligaba a mantener una credencial que
+  # no caduca. Y la recibía una acción anclada a @v0, un tag móvil.
+  #
+  # La service account deploy-production tiene únicamente firebasehosting.admin
+  # y serviceusage.apiKeysViewer, frente a la anterior (Admin SDK), que leía y
+  # escribía todos los datos del proyecto ignorando las Security Rules.
   # ---------------------------------------------------------------------------
   build-and-deploy:
     name: Compilación y Despliegue en Firebase Hosting
     needs: test-and-security
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    environment:
+      name: production
+      url: https://virtual-steam-demo.web.app
+    permissions:
+      contents: read
+      id-token: write   # imprescindible para OIDC / Workload Identity Federation
+    concurrency:
+      group: deploy-produccion
+      cancel-in-progress: false
 
     steps:
       - name: Checkout Código Fuente
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configurar Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -61,10 +89,16 @@ jobs:
       - name: Compilación de Producción (Vite Build)
         run: npm run build
 
-      - name: Despliegue Automatizado a Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Autenticación federada con GCP (sin llaves)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_VIRTUAL_STEAM_DEMO }}'
-          projectId: virtual-steam-demo
-          channelId: live
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_DEPLOY_PROD }}
+
+      - name: Despliegue a Firebase Hosting
+        run: npx --yes firebase-tools@15 deploy --only hosting --project virtual-steam-demo --non-interactive
+
+      - name: Verificación post-despliegue
+        run: |
+          sleep 10
+          curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' https://virtual-steam-demo.web.app
