@@ -41,7 +41,7 @@ jobs:
       # trimestral (control GHR-07b del estándar). Antes estaba en @master, un
       # tag móvil que recibía SNYK_TOKEN en cada ejecución.
       - name: Escaneo de Ciberseguridad de Dependencias con Snyk
-        uses: snyk/actions/node@12140f4059e244892ae643824a95459a102120dd # master @ 2026-08
+        uses: snyk/actions/node@b075801f26076be9bb50521154cafab73f44da0c # master @ 2026-08
         continue-on-error: true # Permite auditar sin bloquear builds en avisos informativos
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
